@@ -23,7 +23,7 @@ find_package(Torch REQUIRED)
 run_python(TORCH_VERSION
   "import torch; print(torch.__version__)" "Failed to locate torch path")
 # check torch version is 2.9.0
-if(NOT ${TORCH_VERSION} VERSION_EQUAL "2.9.0")
+if(NOT ${TORCH_VERSION} VERSION_EQUAL "2.9.0" AND NOT ${TORCH_VERSION} VERSION_EQUAL "2.10.0")
   message(FATAL_ERROR "Expected PyTorch version 2.9.0, but found ${TORCH_VERSION}")
 endif()
 

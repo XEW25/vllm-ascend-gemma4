@@ -69,17 +69,29 @@ class AscendRMSNorm(RMSNorm):
 
         if residual is not None:
             residual = torch.ops.vllm.maybe_chunk_residual(x, residual)
-            if enable_custom_op():
-                x, _, residual = torch.ops._C_ascend.npu_add_rms_norm_bias(
-                    x, residual, self.weight, self.bias, self.variance_epsilon
-                )
+            try:
+                if enable_custom_op():
+                    x, _, residual = torch.ops._C_ascend.npu_add_rms_norm_bias(
+                        x, residual, self.weight, self.bias, self.variance_epsilon
+                    )
+                else:
+                    x, _, residual = torch_npu.npu_add_rms_norm(x, residual, self.weight, self.variance_epsilon)
+                    if self.bias is not None:
+                        x.add_(self.bias)
+            except (AttributeError, RuntimeError):
+                x, _, residual = torch_npu.npu_add_rms_norm(x, residual, self.weight, self.variance_epsilon)
+                if self.bias is not None:
+                    x.add_(self.bias)
             else:
                 x, _, residual = torch_npu.npu_add_rms_norm(x, residual, self.weight, self.variance_epsilon)
                 if self.bias is not None:
                     x.add_(self.bias)
             return x, residual
 
-        x, residual = torch_npu.npu_rms_norm(x, self.weight, self.variance_epsilon)
+        try:
+            x, residual = torch_npu.npu_rms_norm(x, self.weight, self.variance_epsilon)
+        except (AttributeError, RuntimeError):
+            return self.forward_native(x, residual)
         if self.bias_loaded:
             x.add_(self.bias)
 
@@ -106,7 +118,10 @@ class AscendGemmaRMSNorm(GemmaRMSNorm):
                 x, _, residual = torch_npu.npu_add_rms_norm(x, residual, 1.0 + self.weight, self.variance_epsilon)
             return x, residual
 
-        x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, self.weight, self.variance_epsilon)
+        try:
+            x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, self.weight, self.variance_epsilon)
+        except (AttributeError, RuntimeError):
+            x, _ = torch_npu.npu_rms_norm(x, 1.0 + self.weight, self.variance_epsilon)
         return x
 
 

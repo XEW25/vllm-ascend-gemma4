@@ -1,3 +1,11 @@
+# Monkey-patch for triton 3.5+ compatibility
+import triton.language as _tl_p
+try:
+    import triton.language.extra.cann.extension as _ext_p
+    for _a in ["extract_slice", "insert_slice", "get_element"]:
+        if hasattr(_ext_p, _a) and not hasattr(_tl_p, _a):
+            setattr(_tl_p, _a, getattr(_ext_p, _a))
+except ImportError: pass
 from typing import Any
 
 import torch
