@@ -1,0 +1,117 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 811ad5f8..e9cd8b2a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -22,9 +22,9 @@ find_package(Torch REQUIRED)
+ 
+ run_python(TORCH_VERSION
+   "import torch; print(torch.__version__)" "Failed to locate torch path")
+-# check torch version is 2.9.0
+-if(NOT ${TORCH_VERSION} VERSION_EQUAL "2.9.0")
+-  message(FATAL_ERROR "Expected PyTorch version 2.9.0, but found ${TORCH_VERSION}")
++# check torch version is 2.9.0 or 2.10.0
++if(NOT ${TORCH_VERSION} VERSION_EQUAL "2.9.0" AND NOT ${TORCH_VERSION} VERSION_EQUAL "2.10.0")
++  message(FATAL_ERROR "Expected PyTorch version 2.9.0 or 2.10.0, but found ${TORCH_VERSION}")
+ endif()
+ 
+ set(RUN_MODE "npu" CACHE STRING "cpu/sim/npu")
+diff --git a/requirements.txt b/requirements.txt
+index 28ce4b7b..c97b9c53 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -13,9 +13,9 @@ pandas
+ psutil
+ setuptools>=64
+ setuptools-scm>=8
+-torch==2.9.0
+-torchvision==0.24.0
+-torchaudio==2.9.0
++torch==2.10.0
++torchvision==0.25.0
++torchaudio==2.10.0
+ wheel
+ xgrammar>=0.1.30
+ pandas-stubs
+@@ -32,9 +32,9 @@ numba
+ # Install torch_npu
+ #--pre
+ #--extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi
+-torch-npu==2.9.0
++torch-npu==2.10.0
+ 
+ arctic-inference==0.1.1
+ transformers>=4.57.4
+ fastapi<0.124.0
+-triton-ascend==3.2.0
++triton-ascend==3.2.1
+diff --git a/setup.py b/setup.py
+index af175864..d6eb4996 100644
+--- a/setup.py
++++ b/setup.py
+@@ -374,8 +374,9 @@ class cmake_build_ext(build_ext):
+             "--build",
+             ".",
+             f"-j={num_jobs}",
+-            *[f"--target={name}" for name in targets],
+         ]
++        for name in targets:
++            build_args.extend(["--target", name])
+         try:
+             subprocess.check_call(["cmake", *build_args], cwd=self.build_temp)
+         except OSError as e:
+diff --git a/vllm_ascend/ops/layernorm.py b/vllm_ascend/ops/layernorm.py
+index 2c3a8b0f..4a2b3819 100644
+--- a/vllm_ascend/ops/layernorm.py
++++ b/vllm_ascend/ops/layernorm.py
+@@ -65,27 +65,8 @@ class AscendRMSNorm(RMSNorm):
+         x: torch.Tensor,
+         residual: torch.Tensor | None = None,
+     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+-        import torch_npu
+-
+-        if residual is not None:
+-            residual = torch.ops.vllm.maybe_chunk_residual(x, residual)
+-            if enable_custom_op():
+-                x, _, residual = torch.ops._C_ascend.npu_add_rms_norm_bias(
+-                    x, residual, self.weight, self.bias, self.variance_epsilon
+-                )
+-            else:
+-                x, _, residual = torch_npu.npu_add_rms_norm(x, residual, self.weight, self.variance_epsilon)
+-                if self.bias is not None:
+-                    x.add_(self.bias)
+-            return x, residual
+-
+-        x, residual = torch_npu.npu_rms_norm(x, self.weight, self.variance_epsilon)
+-        if self.bias_loaded:
+-            x.add_(self.bias)
+-
+-        weight_prefetch_method = get_weight_prefetch_method()
+-        weight_prefetch_method.maybe_prefetch_mlp_weight_postprocess(x)
+-        return x
++        # Always use native path for Gemma4 to avoid NPU kernel dimension issues
++        return self.forward_native(x, residual)
+ 
+ 
+ class AscendGemmaRMSNorm(GemmaRMSNorm):
+@@ -94,19 +75,8 @@ class AscendGemmaRMSNorm(GemmaRMSNorm):
+         x: torch.Tensor,
+         residual: torch.Tensor | None = None,
+     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+-        import torch_npu
+-
+-        if residual is not None:
+-            residual = torch.ops.vllm.maybe_chunk_residual(x, residual)
+-            if enable_custom_op():
+-                x, _, residual = torch.ops._C_ascend.npu_add_rms_norm_bias(
+-                    x, residual, 1.0 + self.weight, None, self.variance_epsilon
+-                )
+-            else:
+-                x, _, residual = torch_npu.npu_add_rms_norm(x, residual, 1.0 + self.weight, self.variance_epsilon)
+-            return x, residual
+-
+-        x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, self.weight, self.variance_epsilon)
++        # Always use native path for Gemma4
++        return self.forward_native(x, residual)
+         return x
+ 
+ 
